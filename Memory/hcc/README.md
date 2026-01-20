@@ -29,48 +29,87 @@ HCC 模拟计算机内存层次结构，将上下文分为三层：
 - `embeddings.py`: 向量嵌入接口及简单实现，用于 L3 检索。
 - `__init__.py`: 模块导出及类型定义。
 
-## 使用示例
+## 集成与使用 (Integration)
+
+### 1. 基础调用
+
+其他模块可以通过以下方式集成 HCC：
 
 ```python
-from src.reactxen.experimental.hcc import (
+from Memory.hcc import (
     HierarchicalCognitiveCache, 
     ContextMigrator,
     Event, 
     EventType
 )
 
-# 1. 初始化
+# 1. 初始化系统
+# 默认使用 Mock LLM 和 Simple Embedding，仅用于测试
 hcc = HierarchicalCognitiveCache()
 migrator = ContextMigrator(hcc)
 
 # 2. 任务初始化 (Context Prefetching)
+# 系统会自动查询 L3 (Prior Wisdom) 并将其包含在初始上下文中
 initial_context = migrator.initialize_context(
     task_description="Image classification on plant leaves",
     user_instruction="Maximize F1 score"
 )
+print(f"Initial Context:\n{initial_context}")
 
 # 3. 记录事件 (L1 Cache)
+# 在任务执行循环中，持续记录环境反馈和 Agent 动作
 hcc.add_event(Event(
     step=0, 
     event_type=EventType.ENVIRONMENT, 
-    content="Task started..."
+    content="Dataset loaded successfully. Shape: (1000, 3, 224, 224)"
 ))
 
 # 4. 构建上下文 (Context Hit)
-# 自动组合 L1 的近期事件和 L2 的历史摘要
+# 获取当前上下文，系统会自动组合 L1 的近期事件和 L2 的历史摘要
 context = migrator.build_context()
 
-# 5. 阶段结束提升 (Phase-level Promotion)
-# 将当前阶段的详细轨迹压缩为 L2 知识
+# 5. 阶段结束提升 (P1 Promotion)
+# 当一个探索阶段结束（如一次完整的代码修改验证循环），触发阶段提升
+# 这将调用 LLM 将详细轨迹压缩为 L2 知识单元
 migrator.promote_phase()
 
-# 6. 任务结束提升 (Task-level Promotion)
-# 将本任务学到的知识持久化为 L3 智慧
+# 6. 任务结束提升 (P2 Promotion)
+# 任务彻底完成时，触发任务提升
+# 这将调用 LLM 蒸馏出可迁移的智慧存入 L3
 migrator.promote_task(
-    task_descriptor="Image classification...",
-    final_code="...",
+    task_descriptor="Image classification on plant leaves",
+    final_code="model = ResNet50(pretrained=True)...",
     final_result="F1: 0.98"
 )
+```
+
+### 2. 生产环境集成
+
+在生产环境中，你需要注入真实的 LLM 和 Embedding 后端：
+
+```python
+from Memory.hcc import ContextMigrator, HierarchicalCognitiveCache, EmbeddingProvider
+import numpy as np
+
+# 1. 实现 LLM protocol (用于 ContextMigrator)
+class RealLLMProvider:
+    def generate(self, prompt: str) -> str:
+        # 调用你的 LLM API (如 OpenAI/Claude/DeepSeek)
+        return call_my_llm_api(prompt)
+
+# 2. 实现 EmbeddingProvider (用于 HierarchicalCognitiveCache)
+class OpenAIEmbedding(EmbeddingProvider):
+    def embed(self, text: str) -> np.ndarray:
+        # 调用 Embedding API
+        vector = get_openai_embedding(text)
+        return np.array(vector)
+
+# 3. 注入依赖
+real_embedding = OpenAIEmbedding()
+real_llm = RealLLMProvider()
+
+hcc = HierarchicalCognitiveCache(embedding_provider=real_embedding)
+migrator = ContextMigrator(hcc, llm_provider=real_llm)
 ```
 
 ## 扩展说明

@@ -1,28 +1,29 @@
 """
-MCTS Demo - 演示变体组合使用
+MCTS Demo - 演示变体组合使用 (工程化版本)
 
 本示例展示如何:
-1. 实现一个简单的环境 (数字猜谜游戏)
-2. 组合多个 MCTS 变体 (PUCT + ProgressiveWidening + Reflexion)
+1. 使用 Config 统一管理参数
+2. 组合多个 MCTS 变体
 3. 运行搜索并观察结果
 """
 
 import sys
 import os
 import random
-import math
+from typing import List
 
 # 确保可以导入本地模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mcts import Environment, Node, MCTS
+from mcts import Environment, Node, MCTS, VanillaMCTS
 from variants.selection import PUCTMCTS
 from variants.expansion import ProgressiveWideningMCTS
 from variants.backprop import ReflexionMCTS
+from config import MCTSConfig, EconomicalConfig, BalancedConfig, DeepThinkerConfig
 
 
 # =============================================================================
-# 1. 定义一个简单的环境: 数字猜谜游戏
+# 1. 环境定义
 # =============================================================================
 
 class NumberGuessingEnv(Environment[int, int]):
@@ -41,7 +42,7 @@ class NumberGuessingEnv(Environment[int, int]):
         self.max_val = max_val
         self.actions = [-10, -5, -1, +1, +5, +10]
     
-    def get_actions(self, state: int) -> list:
+    def get_actions(self, state: int) -> List[int]:
         """获取合法动作 (不能越界)"""
         valid = []
         for a in self.actions:
@@ -63,199 +64,172 @@ class NumberGuessingEnv(Environment[int, int]):
         """奖励: 越接近目标越高"""
         distance = abs(state - self.target)
         max_distance = self.max_val - self.min_val
-        # 归一化到 [0, 1]
-        reward = 1.0 - (distance / max_distance)
-        return reward
+        return 1.0 - (distance / max_distance)
     
     def get_prior(self, state: int, action: int) -> float:
         """先验: 根据动作方向给予先验概率"""
         new_state = state + action
-        
-        # 如果动作朝着目标方向，给更高先验
         if (new_state > state and state < self.target) or \
            (new_state < state and state > self.target):
             return 0.3
         elif new_state == state:
             return 0.1
-        else:
-            return 0.2
+        return 0.2
 
 
 # =============================================================================
-# 2. 组合多个变体: Deep Thinker 配置
+# 2. 组合变体 (使用 Config)
 # =============================================================================
 
-class DeepThinkerMCTS(PUCTMCTS, ProgressiveWideningMCTS, ReflexionMCTS):
-    """组合变体: PUCT + 渐进式扩展 + 反思机制
+class ConfigurableMCTS(PUCTMCTS, ProgressiveWideningMCTS, ReflexionMCTS):
+    """可配置的组合 MCTS
     
-    配置说明:
-        - Selection: PUCT 公式，利用先验引导搜索
-        - Expansion: 渐进式宽度，节省计算资源
-        - Backprop: Reflexion，回传失败原因避免重蹈覆辙
+    通过 MCTSConfig 统一管理所有参数。
     """
     
-    def __init__(
-        self, 
-        env: Environment, 
-        c_puct: float = 2.0,
-        widening_constant: float = 1.0,
-        widening_alpha: float = 0.5,
-        failure_threshold: float = 0.3,
-        max_feedback_per_node: int = 3,
-        max_depth: int = None,
-    ):
-        # 直接调用基类 MCTS 的 __init__
-        MCTS.__init__(self, env, c_param=c_puct, max_depth=max_depth)
+    def __init__(self, env: Environment, config: MCTSConfig):
+        """
+        Args:
+            env: 环境实例
+            config: 配置对象
+        """
+        # 存储配置引用
+        self.config = config
         
-        # 手动设置各变体的属性
-        # PUCT
-        self.c_puct = c_puct
+        # 调用基类初始化
+        MCTS.__init__(self, env, c_param=config.c_puct, max_depth=config.max_depth)
         
-        # Progressive Widening
-        self.widening_constant = widening_constant
-        self.widening_alpha = widening_alpha
+        # Selection 参数
+        self.c_puct = config.c_puct
         
-        # Reflexion
-        self.failure_threshold = failure_threshold
-        self.max_feedback_per_node = max_feedback_per_node
+        # Expansion 参数
+        self.widening_constant = config.widening_constant
+        self.widening_alpha = config.widening_alpha
+        
+        # Backprop 参数
+        self.failure_threshold = config.failure_threshold
+        self.max_feedback_per_node = config.max_feedback_per_node
+    
+    def search_with_config(self, initial_state) -> int:
+        """使用配置中的 num_simulations 进行搜索"""
+        return self.search(initial_state, num_simulations=self.config.num_simulations)
 
 
 # =============================================================================
-# 3. 运行演示
+# 3. Demo Runner
 # =============================================================================
 
-def demo_vanilla_mcts():
-    """演示: Vanilla MCTS"""
-    print("=" * 60)
-    print("Demo 1: Vanilla MCTS (Random Rollout)")
-    print("=" * 60)
+class MCTSDemo:
+    """MCTS 演示运行器"""
     
-    from mcts import VanillaMCTS
+    def __init__(self, env: Environment, config: MCTSConfig, name: str = "Demo"):
+        self.env = env
+        self.config = config
+        self.name = name
+        self.mcts = ConfigurableMCTS(env, config)
     
-    env = NumberGuessingEnv(target=42)
-    mcts = VanillaMCTS(env, c_param=1.414, max_depth=20)
+    def run_single_search(self, initial_state: int) -> dict:
+        """运行单次搜索"""
+        best_action = self.mcts.search_with_config(initial_state)
+        stats = self.mcts.get_stats()
+        
+        return {
+            "initial_state": initial_state,
+            "best_action": best_action,
+            "stats": stats,
+        }
     
-    initial_state = 0
-    best_action = mcts.search(initial_state, num_simulations=50)
+    def run_full_game(self, initial_state: int, max_steps: int = 20) -> dict:
+        """运行完整游戏"""
+        state = initial_state
+        steps = 0
+        trajectory = []
+        
+        while not self.env.is_terminal(state) and steps < max_steps:
+            action = self.mcts.search_with_config(state)
+            new_state = self.env.step(state, action)
+            
+            trajectory.append({
+                "step": steps + 1,
+                "state": state,
+                "action": action,
+                "new_state": new_state,
+            })
+            
+            state = new_state
+            steps += 1
+            self.mcts.root = None  # 重置根节点
+        
+        return {
+            "success": self.env.is_terminal(state),
+            "final_state": state,
+            "total_steps": steps,
+            "trajectory": trajectory,
+        }
     
-    print(f"Target: {env.target}")
-    print(f"Initial state: {initial_state}")
-    print(f"Best action: {best_action:+d}")
-    print(f"Stats: {mcts.get_stats()}")
-    print()
+    def print_result(self, result: dict, show_trajectory: bool = True) -> None:
+        """打印结果"""
+        print(f"\n{'=' * 60}")
+        print(f"Demo: {self.name}")
+        print(f"Config: {self.config.__class__.__name__}")
+        print(f"{'=' * 60}")
+        
+        if "trajectory" in result:
+            # 完整游戏结果
+            status = "✅ Success" if result["success"] else "❌ Failed"
+            print(f"Result: {status}")
+            print(f"Total Steps: {result['total_steps']}")
+            print(f"Final State: {result['final_state']}")
+            
+            if show_trajectory:
+                print(f"\nTrajectory:")
+                for step in result["trajectory"]:
+                    print(f"  Step {step['step']}: {step['state']} + ({step['action']:+d}) = {step['new_state']}")
+        else:
+            # 单次搜索结果
+            print(f"Initial State: {result['initial_state']}")
+            print(f"Best Action: {result['best_action']:+d}")
+            print(f"Stats: {result['stats']}")
 
 
-def demo_puct_mcts():
-    """演示: PUCT 变体"""
-    print("=" * 60)
-    print("Demo 2: PUCT MCTS (Prior-guided)")
-    print("=" * 60)
-    
-    env = NumberGuessingEnv(target=75)
-    mcts = PUCTMCTS(env, c_puct=2.0, max_depth=20)
-    
-    initial_state = 50
-    best_action = mcts.search(initial_state, num_simulations=50)
-    
-    print(f"Target: {env.target}")
-    print(f"Initial state: {initial_state}")
-    print(f"Best action: {best_action:+d}")
-    print(f"Stats: {mcts.get_stats()}")
-    print()
+# =============================================================================
+# 4. Main
+# =============================================================================
 
-
-def demo_progressive_widening():
-    """演示: 渐进式扩展变体"""
+def main():
+    """主函数"""
     print("=" * 60)
-    print("Demo 3: Progressive Widening MCTS")
-    print("=" * 60)
-    
-    env = NumberGuessingEnv(target=30)
-    mcts = ProgressiveWideningMCTS(
-        env, 
-        widening_constant=1.0,
-        widening_alpha=0.5,
-        max_depth=20
-    )
-    
-    initial_state = 50
-    best_action = mcts.search(initial_state, num_simulations=50)
-    
-    print(f"Target: {env.target}")
-    print(f"Initial state: {initial_state}")
-    print(f"Best action: {best_action:+d}")
-    print(f"Stats: {mcts.get_stats()}")
-    print()
-
-
-def demo_deep_thinker():
-    """演示: 组合变体 (Deep Thinker)"""
-    print("=" * 60)
-    print("Demo 4: Deep Thinker MCTS (Combined Variants)")
+    print("MCTS Demo with Configuration")
     print("=" * 60)
     
-    env = NumberGuessingEnv(target=88)
-    mcts = DeepThinkerMCTS(env, max_depth=20)
+    # 定义目标
+    target = random.randint(10, 90)
+    print(f"\nTarget (hidden): {target}")
     
-    initial_state = 10
-    best_action = mcts.search(initial_state, num_simulations=100)
-    
-    print(f"Target: {env.target}")
-    print(f"Initial state: {initial_state}")
-    print(f"Best action: {best_action:+d}")
-    print(f"Stats: {mcts.get_stats()}")
-    
-    # 打印搜索树
-    print("\nSearch Tree (depth=2):")
-    mcts.print_tree(max_depth=2)
-    print()
-
-
-def demo_full_game():
-    """演示: 完整游戏流程"""
-    print("=" * 60)
-    print("Demo 5: Full Game with MCTS Agent")
-    print("=" * 60)
-    
-    target = random.randint(1, 99)
+    # 创建环境
     env = NumberGuessingEnv(target=target)
-    mcts = DeepThinkerMCTS(env, max_depth=15)
     
-    state = 50  # 从中间开始
-    steps = 0
-    max_steps = 20
+    # 测试不同配置
+    configs = [
+        ("Economical", EconomicalConfig()),
+        ("Balanced", BalancedConfig()),
+        ("DeepThinker", DeepThinkerConfig()),
+    ]
     
-    print(f"Target (hidden): {target}")
-    print(f"Starting at: {state}")
-    print("-" * 40)
+    for name, config in configs:
+        demo = MCTSDemo(env, config, name=name)
+        result = demo.run_full_game(initial_state=50)
+        demo.print_result(result, show_trajectory=False)
     
-    while not env.is_terminal(state) and steps < max_steps:
-        # 使用 MCTS 选择动作
-        action = mcts.search(state, num_simulations=30)
-        new_state = env.step(state, action)
-        
-        print(f"Step {steps + 1}: {state} + ({action:+d}) = {new_state}")
-        
-        state = new_state
-        steps += 1
-        
-        # 重置 MCTS 根节点用于下一步搜索
-        mcts.root = None
+    # 详细展示 Balanced 配置
+    print("\n" + "=" * 60)
+    print("Detailed Run with Balanced Config")
+    print("=" * 60)
     
-    print("-" * 40)
-    if env.is_terminal(state):
-        print(f"✅ Found target {target} in {steps} steps!")
-    else:
-        print(f"❌ Failed to find target. Final state: {state}, distance: {abs(state - target)}")
+    demo = MCTSDemo(env, BalancedConfig(), name="Balanced (Detailed)")
+    result = demo.run_full_game(initial_state=50)
+    demo.print_result(result, show_trajectory=True)
 
 
 if __name__ == "__main__":
-    demo_vanilla_mcts()
-    demo_puct_mcts()
-    demo_progressive_widening()
-    demo_deep_thinker()
-    demo_full_game()
-    
-    print("=" * 60)
-    print("All demos completed!")
-    print("=" * 60)
+    main()

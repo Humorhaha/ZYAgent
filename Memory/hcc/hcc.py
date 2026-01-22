@@ -19,6 +19,7 @@ from typing import List, Dict, Optional, Set, Any
 from enum import Enum
 from datetime import datetime
 import numpy as np
+import copy
 
 from .embeddings import EmbeddingProvider, SimpleEmbeddingProvider, batch_cosine_similarity
 
@@ -442,3 +443,18 @@ class HierarchicalCognitiveCache:
             "l3_wisdom_entries": len(self.l3),
             "current_phase": self.l1.current_phase
         }
+
+    def create_snapshot(self) -> "HierarchicalCognitiveCache":
+        """创建 HCC 的深拷贝快照 (用于 Async MCTS)
+        
+        MCTS 在独立线程/进程中运行时，需要一份独立的状态副本，
+        以免受到主线程更新的影响 (State Drift 保护)。
+        """
+        # 使用 deepcopy 创建完全独立的副本
+        # 注意: EmbeddingProvider 通常是无状态的或共享的，
+        # 如果有大模型加载，需注意 copy 行为。
+        # 这里假设 embedder 可以浅拷贝或重新引用。
+        
+        # 暂时简单处理: 深拷贝整个对象
+        # 在生产环境中，可能需要更精细的控制 (如不拷贝 Embedding 缓存)
+        return copy.deepcopy(self)

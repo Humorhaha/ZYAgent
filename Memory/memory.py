@@ -27,7 +27,8 @@ from pathlib import Path
 from dataclasses import dataclass
 
 # HCC 模块导入
-from hcc import (
+# HCC 模块导入
+from .hcc import (
     HierarchicalCognitiveCache,
     ContextMigrator,
     Event,
@@ -37,7 +38,7 @@ from hcc import (
 )
 
 # TTS 模块导入
-from tts import (
+from .tts import (
     TinyTrajectoryStore,
     Trajectory,
     TrajectoryStep,
@@ -114,6 +115,119 @@ class AgentMemory:
         # 内部状态
         self._step_count = 0
         self._task_description = ""
+    
+    def create_snapshot(self) -> 'AgentMemory':
+        """创建 Memory 的深拷贝快照 (用于 System 2 异步计算)
+        
+        Returns:
+            独立的 AgentMemory 副本，包含当前的 TTS 和 HCC 状态。
+        """
+        import copy
+        # 创建一个新的实例
+        snapshot = AgentMemory(
+            config=self.config,
+            embedding_provider=self._embedder,
+            # 注意: llm_provider 如果有状态需要深拷贝，通常它是无状态服务的 Wrapper
+            # 这里浅拷贝引用即可
+            llm_provider=self.migrator.llm_provider 
+        )
+        
+        # 复制内部状态
+        snapshot._step_count = self._step_count
+        snapshot._task_description = self._task_description
+        
+        # 复制 HCC (使用 HCC 的深拷贝机制)
+        snapshot.hcc = self.hcc.create_snapshot()
+        
+        # 重新绑定 Migrator 到新的 HCC
+        snapshot.migrator = ContextMigrator(
+            hcc=snapshot.hcc,
+            llm_provider=snapshot.migrator.llm_provider,
+            similarity_threshold=self.config.hcc_similarity_threshold,
+        )
+        
+        # TTS 通常是只读的，可以共享引用，或者也深拷贝
+        # 为了安全起见，如果 TTS 有动态添加示例的需求，建议深拷贝
+        # 这里假设 TTS 主要是静态的，或者 add_example 很少发生
+        # 如果需要完全隔离: snapshot.tts = copy.deepcopy(self.tts)
+        snapshot.tts = self.tts 
+        
+        return snapshot
+
+    def inject_wisdom(
+        self, 
+        wisdom: str, 
+        search_traces: Optional[List[str]] = None,
+        promote_to_l2: bool = True
+    ) -> None:
+        """注入外部智慧 (通过 L1 -> L2 渐进式提升)
+        
+        设计理念:
+            MCTS 的结果被视为"前人智慧"，需要经过 HCC 的自然层级过滤。
+            这样可以确保错误的建议在提升过程中被纠正或过滤。
+        
+        流程:
+            1. 将 MCTS 搜索轨迹记录到 L1 (原始经验)
+            2. 直接创建 L2 Knowledge Unit (因为 MCTS 结果已是精炼的)
+            3. 当任务完成时，L2 -> L3 自然提升
+        
+        Args:
+            wisdom: 提炼的智慧文本
+            search_traces: MCTS 搜索过程的轨迹 (可选)
+            promote_to_l2: 是否立即提升到 L2 (默认 True)
+        """
+        if not self._task_description:
+            print("[Memory] Warning: Injecting wisdom without task context")
+            return
+        
+        print(f"[Memory] Recording MCTS experience to L1...")
+        
+        # Step 1: 记录搜索轨迹到 L1 (如果有)
+        if search_traces:
+            for i, trace in enumerate(search_traces):
+                self.record_event(
+                    f"[MCTS-Trace-{i+1}] {trace}", 
+                    EventType.AGENT
+                )
+        
+        # Step 2: 记录最终建议到 L1
+        self.record_event(
+            f"[MCTS-Insight] {wisdom}", 
+            EventType.AGENT
+        )
+        
+        # Step 3: 直接创建 L2 Knowledge Unit
+        # MCTS 的输出已经是结构化的洞察，无需再次 LLM 压缩
+        if promote_to_l2:
+            print(f"[Memory] Promoting MCTS experience: L1 -> L2")
+            from .hcc import KnowledgeUnit
+            
+            knowledge = KnowledgeUnit(
+                phase_id=self.hcc.l1.current_phase,
+                start_step=self._step_count - len(search_traces or []) - 1,
+                end_step=self._step_count,
+                summary=f"[MCTS] {wisdom}",
+            )
+            self.hcc.l2.add_knowledge(knowledge)
+            
+            # 同时更新 L1 的 phase 计数器
+            self.hcc.l1._current_phase += 1
+    
+    def inject_and_finalize_wisdom(
+        self, 
+        wisdom: str, 
+        search_traces: Optional[List[str]] = None
+    ) -> None:
+        """注入并立即提升到 L3 (用于紧急/高置信度场景)
+        
+        警告: 跳过 L2 积累阶段，直接写入 L3。
+        仅在 MCTS 结果高度可信时使用。
+        """
+        self.inject_wisdom(wisdom, search_traces, promote_to_l2=True)
+        
+        # 立即触发 Task Promotion (L2 -> L3)
+        print(f"[Memory] Finalizing wisdom: L2 -> L3")
+        self.finish_task(final_result=f"MCTS Wisdom: {wisdom}")
     
     # ==================== TTS 相关方法 ====================
     

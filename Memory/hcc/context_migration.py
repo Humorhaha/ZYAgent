@@ -150,6 +150,11 @@ Output a concise wisdom paragraph, no extra formatting."""
         self._llm = llm_provider or MockLLMProvider()
         self._threshold = similarity_threshold
     
+    @property
+    def llm_provider(self) -> LLMProvider:
+        """获取内部的 LLM Provider"""
+        return self._llm
+    
     def initialize_context(
         self, 
         task_description: str, 

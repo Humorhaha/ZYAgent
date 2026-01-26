@@ -17,12 +17,8 @@ from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 
 from Memory.memory import AgentMemory
-from MCTS.mcts import MCTS, Environment
+from MCTS.mcts import MCTS, Environment, VanillaMCTS
 from MCTS.config import MCTSConfig, DeepThinkerConfig
-
-# 导入组合变体 (从 demo.py 中定义的 ConfigurableMCTS)
-# 如果需要在生产环境中使用，应该将 ConfigurableMCTS 移动到 MCTS 模块中
-from MCTS.demo import ConfigurableMCTS
 
 
 def create_deep_thinker_factory(config: MCTSConfig = None):
@@ -32,13 +28,13 @@ def create_deep_thinker_factory(config: MCTSConfig = None):
         config: MCTS 配置，默认使用 DeepThinkerConfig
         
     Returns:
-        工厂函数，接受 env 并返回 ConfigurableMCTS 实例
+        工厂函数，接受 env 并返回 MCTS 实例
     """
     if config is None:
         config = DeepThinkerConfig()
     
     def factory(env: Environment) -> MCTS:
-        return ConfigurableMCTS(env, config)
+        return VanillaMCTS(env, c_param=config.c_puct, max_depth=config.max_depth)
     
     return factory
 
@@ -311,31 +307,46 @@ class AsyncMCTSBridge:
     
     职责:
         - 管理后台线程
-        - 接收 Snapshot
-        - 运行 MCTS
-        - 回调 Inject Wisdom
+        - 从 Failure Queue 拉取失败任务
+        - 运行 MCTS 进行 Off-policy 探索
+        - 将结果写入 HCC 并提炼 Wisdom
+    
+    架构位置 (参考 pipeline.tex):
+        后台进程: Failure Queue → MCTS → HCC (L1/L2) → Lazy Update
     """
     
     def __init__(
         self, 
         mcts_factory: Callable[[Environment], MCTS],
         monitor_config: MonitorConfig = None,
-        llm_provider: Optional[LLMProvider] = None
+        llm_provider: Optional[LLMProvider] = None,
+        failure_queue: Optional[Any] = None,  # FailureQueue instance
+        target_memory: Optional[AgentMemory] = None,  # 主进程 Memory (用于写入 HCC)
     ):
         """
         Args:
             mcts_factory: 创建 MCTS 实例的工厂函数
             monitor_config: 监控配置
             llm_provider: LLM 提供者，用于 Wisdom 总结
+            failure_queue: Failure Queue 实例 (System 2 任务来源)
+            target_memory: 主进程 AgentMemory (用于 HCC 写入)
         """
         self.mcts_factory = mcts_factory
         self.monitor = Monitor(monitor_config)
         self.distiller = WisdomDistiller(llm_provider=llm_provider)
         
+        # Failure Queue 整合
+        self.failure_queue = failure_queue
+        self.target_memory = target_memory
+        
         # 任务队列
         self._queue = queue.Queue()
         self._stop_event = threading.Event()
         self._worker_thread = None
+        
+        # Lazy Update: pending wisdom 队列
+        self._pending_wisdom: List[str] = []
+        self._pending_lock = threading.Lock()
         
         # 启动后台线程
         self.start()
@@ -356,6 +367,18 @@ class AsyncMCTSBridge:
         if self._worker_thread:
             self._worker_thread.join(timeout=2.0)
             print("[Bridge] Async MCTS service stopped.")
+    
+    def has_pending(self) -> bool:
+        """检查是否有 pending wisdom"""
+        with self._pending_lock:
+            return len(self._pending_wisdom) > 0
+    
+    def pop_wisdom(self) -> Optional[str]:
+        """弹出一个 pending wisdom (FIFO)"""
+        with self._pending_lock:
+            if self._pending_wisdom:
+                return self._pending_wisdom.pop(0)
+            return None
     
     def trigger(self, memory: AgentMemory, env: Environment) -> bool:
         """主线程调用: 尝试触发 MCTS
@@ -444,10 +467,14 @@ class AsyncMCTSBridge:
         # 4. 提炼智慧
         wisdom = self.distiller.distill(mcts, mcts.root, best_action)
         
-        # 5. 注入智慧 (通过 L1 -> L2 渐进式提升)
-        # 注意: 这通常发生在主线程之外，需要确保 memory 是线程安全的
-        print(f"[Bridge] Wisdom distilled. Injecting to L1 -> L2...")
-        target_memory.inject_wisdom(wisdom, search_traces=search_traces)
+        # 5. Lazy Update: 将 wisdom 放入队列，而非直接注入
+        print(f"[Bridge] Wisdom distilled. Queuing for lazy update...")
+        with self._pending_lock:
+            self._pending_wisdom.append(wisdom)
+        
+        # 可选: 同时记录搜索轨迹到快照 memory (不影响主线程)
+        for trace in search_traces:
+            memory_snapshot.record_event(f"[MCTS] {trace}")
     
     def _extract_search_traces(self, root_node) -> List[str]:
         """从搜索树中提取关键轨迹 (用于 L1 记录)"""
@@ -482,3 +509,124 @@ class AsyncMCTSBridge:
                 break
         
         return path
+    
+    # =========================================================================
+    # Failure Queue 整合 (架构: Failure Queue → MCTS)
+    # =========================================================================
+    
+    def process_failure_queue(self, env_factory: Callable[[], Environment]) -> int:
+        """从 Failure Queue 拉取任务并处理
+        
+        架构位置: Failure Queue → MCTS Simulator → HCC
+        
+        Args:
+            env_factory: 创建 Environment 的工厂函数
+            
+        Returns:
+            处理的任务数量
+        """
+        if not self.failure_queue:
+            print("[Bridge] No failure queue configured.")
+            return 0
+        
+        processed = 0
+        
+        while not self.failure_queue.is_empty():
+            failure = self.failure_queue.pop()
+            if failure is None:
+                break
+            
+            print(f"[Bridge] Processing failure: {failure.task_id}")
+            
+            try:
+                # 1. 创建 Environment
+                env = env_factory()
+                
+                # 2. 运行 MCTS
+                mcts = self.mcts_factory(env)
+                initial_state = 50  # Mock state
+                best_action = mcts.search(initial_state, num_simulations=100)
+                
+                # 3. 提取轨迹
+                search_traces = self._extract_search_traces(mcts.root)
+                
+                # 4. 提炼 Wisdom
+                wisdom = self.distiller.distill(mcts, mcts.root, best_action)
+                
+                # 5. 写入 HCC (如果有 target_memory)
+                if self.target_memory:
+                    self._write_to_hcc(
+                        wisdom=wisdom,
+                        traces=search_traces,
+                        failure=failure,
+                        success=(mcts.root.q_value > 0.5 if mcts.root else False),
+                    )
+                
+                # 6. 添加到 pending wisdom
+                with self._pending_lock:
+                    self._pending_wisdom.append(wisdom)
+                
+                processed += 1
+                
+            except Exception as e:
+                print(f"[Bridge] Error processing failure {failure.task_id}: {e}")
+        
+        return processed
+    
+    def _write_to_hcc(
+        self,
+        wisdom: str,
+        traces: List[str],
+        failure: Any,  # FailureTrajectory
+        success: bool,
+    ) -> None:
+        """将 MCTS 结果写入 HCC
+        
+        架构位置: MCTS → HCC Level 1 (Success/Failure)
+        
+        Args:
+            wisdom: 提炼的智慧
+            traces: 搜索轨迹
+            failure: 原始失败信息
+            success: MCTS 是否找到成功路径
+        """
+        if not self.target_memory:
+            return
+        
+        # 记录到 HCC (通过 inject_wisdom)
+        trace_summary = "\n".join(traces[:3])  # 只取 Top-3
+        
+        if success:
+            # Success Path: 写入 L1 并标记可提升
+            self.target_memory.inject_wisdom(
+                wisdom=f"[MCTS Success] {wisdom}\n\nTask: {failure.query[:50]}...",
+                search_traces=traces,
+                promote_to_l2=True,  # 成功路径优先提升
+            )
+            print(f"[Bridge] SUCCESS trajectory written to HCC L1 → L2")
+        else:
+            # Failure Path: 只写入 L1 备查
+            self.target_memory.inject_wisdom(
+                wisdom=f"[MCTS Explored] {wisdom}\n\nOriginal Failure: {failure.failure_reason}",
+                search_traces=traces,
+                promote_to_l2=False,  # 不立即提升
+            )
+            print(f"[Bridge] FAILURE trajectory written to HCC L1")
+    
+    # =========================================================================
+    # Wisdom Promotion (架构: HCC L1 → L2)
+    # =========================================================================
+    
+    def promote_wisdom(self) -> int:
+        """触发 HCC L1 → L2 的知识提升
+        
+        Returns:
+            提升的条目数量
+        """
+        if not self.target_memory:
+            return 0
+        
+        # 调用 Memory 的 promote 方法
+        self.target_memory.promote_phase()
+        print("[Bridge] Wisdom promotion triggered (L1 → L2)")
+        return 1  # 简化返回

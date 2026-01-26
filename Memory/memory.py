@@ -1,24 +1,27 @@
 """
 Memory 模块统一接口
 
-将 HCC (Hierarchical Cognitive Caching) 和 TTS (Tiny Trajectory Stores) 
+将 HCC (Hierarchical Cognitive Caching) 和 TTS (Tiny Trajectory Store) 
 整合为统一的 Memory 系统，对外提供简洁的 API。
 
-设计理念 (Teacher & Notebook Model):
-    - TTS (Teacher): 只读的静态轨迹库，提供 Few-Shot 示例
-    - HCC (Notebook): 读写的动态缓存，管理任务进度和积累智慧
+设计理念 (pipeline.tex):
+    - TTS (Tiny Trajectory Store): 可读写的轨迹缓存
+        - 写入: Reflect Agent 写入失败/成功的轨迹
+        - 读取: ReAct Agent 获取压缩后的 Markov 轨迹
+        - 压缩: 每次写入时 LLM 将新轨迹与现有摘要合并，始终只保留一条 Markov 轨迹
+    - HCC (Hierarchical Cognitive Cache): 三层知识缓存
+        - L1: 短期工作记忆 (Evolving Experience)
+        - L2: 中期策略记忆 (Refined Knowledge)
+        - L3: 长期持久记忆 (Prior Wisdom)
 
 使用示例:
     ```python
     from Memory.memory import AgentMemory
     
     memory = AgentMemory()
-    memory.load_examples("./examples/")
-    
-    prompt = memory.build_prompt(
-        task="Train a classifier",
-        system_prompt="You are an AI assistant."
-    )
+    memory.start_task("Train a classifier")
+    memory.record_thought_action(thought="...", action="...", observation="...")
+    compressed = memory.get_tts_buffer()  # 获取压缩后的 Markov 轨迹
     ```
 """
 
@@ -62,6 +65,9 @@ class MemoryConfig:
     # HCC 配置
     hcc_similarity_threshold: float = 0.5  # L3 检索的相似度阈值
     hcc_auto_promote_steps: int = 20       # 自动触发 Phase Promotion 的步数
+    
+    # Markov 约束: 只看最近 N 轮的上下文
+    markov_window: int = 1
     
     # Prompt 配置
     examples_header: str = "## Reference Examples\n\nLearn from these examples:\n\n"
@@ -115,6 +121,18 @@ class AgentMemory:
         # 内部状态
         self._step_count = 0
         self._task_description = ""
+        
+        # LLM 实例 (用于 TTS 压缩和知识提炼)
+        self._llm_provider = llm_provider
+        self._llm = None  # 延迟初始化
+        
+        # Hot Start: HCC Wisdom 缓存 (只在 start_task 时提取一次)
+        self._hot_start_wisdom: str = ""
+        self._wisdom_fetched: bool = False
+        
+        # TTS Buffer: 压缩后的轨迹摘要 (每个 iteration 更新)
+        # 符合 Markov 性质：使用 LLM 压缩，只保留关键信息
+        self._tts_buffer_summary: str = ""
     
     def create_snapshot(self) -> 'AgentMemory':
         """创建 Memory 的深拷贝快照 (用于 System 2 异步计算)
@@ -273,20 +291,41 @@ class AgentMemory:
     
     # ==================== HCC 相关方法 ====================
     
-    def start_task(self, task_description: str, user_instruction: str = "") -> str:
-        """开始新任务
+    def start_task(
+        self, 
+        task_description: str, 
+        user_instruction: str = "",
+        fetch_wisdom: bool = True,
+    ) -> str:
+        """开始新任务 (Hot Start)
         
-        初始化 HCC 上下文，并返回包含先验智慧的初始上下文。
+        架构 (pipeline.tex):
+            - Hot Start: 从 HCC L2/L3 提取 Wisdom (只执行一次)
+            - TTS Buffer: 清空，准备记录新任务的执行轨迹
         
         Args:
             task_description: 任务描述
             user_instruction: 用户指令
+            fetch_wisdom: 是否执行 Hot Start (从 HCC 获取 Wisdom)
             
         Returns:
-            初始上下文文本 (包含预取的 L3 智慧)
+            初始上下文文本 (包含预取的 HCC Wisdom)
         """
         self._task_description = task_description
         self._step_count = 0
+        
+        # 重置 TTS Buffer 摘要 (每个任务独立)
+        self._tts_buffer_summary = ""
+        
+        # Hot Start: 从 HCC L2/L3 提取 Wisdom (只执行一次)
+        if fetch_wisdom and not self._wisdom_fetched:
+            self._hot_start_wisdom = self.get_wisdom_for_hot_start(
+                query=task_description,
+                k=3,
+            )
+            self._wisdom_fetched = True
+            print(f"[Memory] Hot Start: Loaded wisdom from HCC")
+        
         return self.migrator.initialize_context(task_description, user_instruction)
     
     def record_event(
@@ -320,16 +359,134 @@ class AgentMemory:
     ) -> None:
         """记录一个完整的 Thought-Action-Observation 循环
         
-        便捷方法，将一个 ReAct 步骤记录为多个事件。
+        架构 (pipeline.tex):
+            - 记录到 HCC L1 (长期存储)
+            - 使用 LLM 压缩 TTS Buffer，保留关键信息 (Markov 约束)
         """
+        # 1. 记录到 HCC L1
         self.record_event(f"Thought: {thought}", EventType.AGENT)
         self.record_event(f"Action: {action}", EventType.AGENT)
         if observation:
             self.record_event(f"Observation: {observation}", EventType.ENVIRONMENT)
+        
+        # 2. 构建当前轨迹
+        current_trajectory = f"Thought: {thought}\nAction: {action}"
+        if observation:
+            current_trajectory += f"\nObservation: {observation}"
+        
+        # 3. 使用 LLM 压缩 (合并历史摘要与当前轨迹)
+        self._tts_buffer_summary = self._compress_tts_buffer(
+            current_trajectory=current_trajectory,
+            previous_summary=self._tts_buffer_summary,
+        )
     
-    def get_context(self) -> str:
-        """获取当前上下文 (HCC 的 L1 + L2)"""
-        return self.migrator.build_context()
+    def _compress_tts_buffer(
+        self,
+        current_trajectory: str,
+        previous_summary: str,
+    ) -> str:
+        """使用 LLM 压缩 TTS Buffer
+        
+        将当前轨迹与历史摘要合并，生成新的压缩摘要。
+        
+        Args:
+            current_trajectory: 当前轮的执行轨迹
+            previous_summary: 之前的压缩摘要
+            
+        Returns:
+            新的压缩摘要
+        """
+        # 延迟初始化 LLM
+        if self._llm is None:
+            try:
+                from LLM.llm import LLM
+                if self._llm_provider:
+                    self._llm = LLM(provider=self._llm_provider)
+                else:
+                    # 无 LLM 时使用简单拼接
+                    self._llm = LLM(mock_mode=True)
+            except ImportError:
+                # 回退: 无 LLM 压缩，直接拼接
+                if previous_summary:
+                    return f"{previous_summary}\n---\n{current_trajectory}"
+                return current_trajectory
+        
+        # 使用 LLM 压缩
+        if self._llm.is_mock:
+            # Mock 模式: 简单保留最新轨迹 + 历史摘要前 200 字符
+            if previous_summary:
+                truncated_prev = previous_summary[:200] + "..." if len(previous_summary) > 200 else previous_summary
+                return f"[历史] {truncated_prev}\n[最新] {current_trajectory}"
+            return current_trajectory
+        
+        # 真正的 LLM 压缩
+        return self._llm.compress_trajectory(
+            current_trajectory=current_trajectory,
+            previous_summary=previous_summary,
+        )
+    
+    def get_tts_buffer(self) -> str:
+        """获取 TTS Buffer 内容 (压缩后的轨迹摘要)
+        
+        架构 (pipeline.tex):
+            TTS Buffer 使用 LLM 压缩轨迹，只保留关键信息。
+            每个 iteration 的 ReAct Agent 从这里获取上下文。
+            
+        Returns:
+            压缩后的 TTS Buffer 摘要
+        """
+        return self._tts_buffer_summary
+    
+    def write_to_tts(
+        self,
+        trajectory: str,
+        source: str = "reflect",
+    ) -> None:
+        """写入轨迹到 TTS Buffer (供 Reflect Agent 使用)
+        
+        架构 (pipeline.tex):
+            - Reflect Agent 将失败/成功的轨迹写入 TTS
+            - TTS 使用 LLM 压缩，提炼为符合 Markov 性质的摘要
+        
+        Args:
+            trajectory: 要写入的轨迹内容
+            source: 来源标记 ("reflect", "success", "failure")
+        """
+        print(f"[Memory] Writing to TTS from {source}")
+        
+        # 使用 LLM 压缩：将新轨迹与现有摘要合并
+        tagged_trajectory = f"[{source.upper()}] {trajectory}"
+        self._tts_buffer_summary = self._compress_tts_buffer(
+            current_trajectory=tagged_trajectory,
+            previous_summary=self._tts_buffer_summary,
+        )
+    
+    def get_hot_start_wisdom(self) -> str:
+        """获取 Hot Start Wisdom (从 HCC 预取的)
+        
+        Returns:
+            Hot Start 时预取的 Wisdom 文本
+        """
+        return self._hot_start_wisdom
+    
+    def get_context(self, window: Optional[int] = None) -> str:
+        """获取当前上下文 (Markov 约束)
+        
+        Args:
+            window: 回看的轮数，None 使用配置的 markov_window
+                    window=1 表示只看最近一轮的事件
+        
+        Returns:
+            受 Markov 约束的上下文文本
+        """
+        w = window if window is not None else self.config.markov_window
+        
+        if w <= 0:
+            # 无限制，返回完整上下文
+            return self.migrator.build_context()
+        
+        # 只返回最近 w 个 phase 的事件
+        return self.migrator.build_context(max_phases=w)
     
     def promote_phase(self) -> None:
         """手动触发阶段提升 (L1 -> L2)"""
@@ -433,6 +590,103 @@ class AgentMemory:
         )
         self._step_count = 0
         self._task_description = ""
+    
+    # ==================== 轨迹管理 (架构: pipeline.tex) ====================
+    
+    def record_success_trajectory(
+        self,
+        query: str,
+        trajectory: str,
+        final_answer: str,
+    ) -> None:
+        """记录成功轨迹到 HCC L1
+        
+        架构位置: Success → HCC Level 1 (成功轨迹)
+        
+        Args:
+            query: 原始查询
+            trajectory: 完整执行轨迹
+            final_answer: 最终答案
+        """
+        print(f"[Memory] Recording success trajectory to HCC L1")
+        
+        # 记录到 L1
+        self.record_event(
+            f"[SUCCESS] Task: {query[:50]}...\nAnswer: {final_answer[:100]}...",
+            EventType.AGENT
+        )
+        
+        # 创建 Wisdom 并可选提升到 L2
+        self.inject_wisdom(
+            wisdom=f"Successfully solved: {query[:50]}...\nApproach: {final_answer[:100]}...",
+            search_traces=[trajectory],
+            promote_to_l2=True,
+        )
+    
+    def record_failure_trajectory(
+        self,
+        query: str,
+        trajectory: str,
+        failure_reason: str,
+        reflect_output: str = "",
+    ) -> None:
+        """记录失败轨迹到 HCC L1
+        
+        架构位置: Failure → HCC Level 1 (失败轨迹)
+        
+        Args:
+            query: 原始查询
+            trajectory: 完整执行轨迹
+            failure_reason: 失败原因
+            reflect_output: Reflect Agent 的输出
+        """
+        print(f"[Memory] Recording failure trajectory to HCC L1")
+        
+        # 记录到 L1 (不立即提升)
+        self.record_event(
+            f"[FAILURE] Task: {query[:50]}...\nReason: {failure_reason}",
+            EventType.AGENT
+        )
+        
+        if reflect_output:
+            self.record_event(
+                f"[REFLECT] {reflect_output[:200]}...",
+                EventType.AGENT
+            )
+    
+    def get_wisdom_for_hot_start(
+        self,
+        query: str,
+        k: int = 3,
+    ) -> str:
+        """从 HCC L3 获取相关 Wisdom (Hot Start)
+        
+        使用 Cosine 相似度检索最相关的 Wisdom (Embedding-Value 结构)。
+        
+        架构位置: HCC Level 3 (Wisdom) → Distillation Agent
+        
+        Args:
+            query: 当前任务查询
+            k: 返回的 Wisdom 数量
+            
+        Returns:
+            格式化的 Wisdom 文本
+        """
+        print(f"[Memory] Hot Start: Fetching wisdom for query: {query[:50]}...")
+        
+        # 使用 Cosine 相似度检索 Top-K Wisdom
+        # retrieve_top_k 返回 (wisdom_text, similarity_score) 列表
+        results = self.hcc.l3.retrieve_top_k(query, k=k, min_threshold=0.2)
+        
+        if not results:
+            return ""
+        
+        # 格式化输出 (显示相似度分数)
+        lines = ["## Prior Wisdom (from HCC L3 by Cosine Similarity)\n"]
+        for i, (wisdom, score) in enumerate(results, 1):
+            lines.append(f"{i}. [score={score:.2f}] {wisdom}")
+        
+        return "\n".join(lines)
     
     def __repr__(self) -> str:
         return (

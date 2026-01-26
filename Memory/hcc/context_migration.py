@@ -198,17 +198,20 @@ Output a concise wisdom paragraph, no extra formatting."""
         
         return "\n\n".join(parts)
     
-    def build_context(self) -> str:
+    def build_context(self, max_phases: Optional[int] = None) -> str:
         """构建当前上下文 (Context Hit)
         
         论文公式:
             Ψ_t(k) = e_k                    if e_k ∈ L1(t)
                    = κ_{t_{r-1}+1:t_{r-1}}  if e_k ∉ L1(t), e_k ∈ L2(t)
                    = ∅                      otherwise
+        
+        Args:
+            max_phases: Markov 约束 - 只返回最近 N 个 phase 的内容
             
         委托给HCC的build_context方法
         """
-        return self._hcc.build_context()
+        return self._hcc.build_context(max_phases=max_phases)
     
     def promote_phase(self, traces: Optional[List[str]] = None) -> PromotionResult:
         """阶段级提升 (Phase-level Promotion P1)

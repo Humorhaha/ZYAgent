@@ -294,6 +294,45 @@ class L3PriorWisdom:
         
         return results
     
+    def retrieve_top_k(
+        self, 
+        query: str, 
+        k: int = 3,
+        min_threshold: float = 0.1,
+    ) -> list:
+        """按 Cosine 相似度检索 Top-K 最相关的 Wisdom
+        
+        Args:
+            query: 查询文本
+            k: 返回的数量
+            min_threshold: 最小相似度阈值
+            
+        Returns:
+            List of (wisdom_text, similarity_score) 元组，按相似度降序
+        """
+        if not self._entries:
+            return []
+        
+        # 计算查询嵌入
+        query_embedding = self._embedder.embed(query)
+        
+        # 确保嵌入矩阵已构建
+        if self._embedding_matrix is None:
+            self._embedding_matrix = np.stack([e.embedding for e in self._entries])
+        
+        # 计算余弦相似度
+        similarities = batch_cosine_similarity(query_embedding, self._embedding_matrix)
+        
+        # 按相似度排序
+        scored_entries = [
+            (self._entries[i].wisdom, float(sim))
+            for i, sim in enumerate(similarities)
+            if sim > min_threshold
+        ]
+        scored_entries.sort(key=lambda x: x[1], reverse=True)
+        
+        return scored_entries[:k]
+    
     def get_all_entries(self) -> List[WisdomEntry]:
         """获取所有智慧条目"""
         return list(self._entries)
@@ -365,7 +404,7 @@ class HierarchicalCognitiveCache:
         """
         return self.l3.prefetch(task_descriptor, threshold)
     
-    def build_context(self) -> str:
+    def build_context(self, max_phases: Optional[int] = None) -> str:
         """构建上下文 (Context Hit)
         
         论文公式:
@@ -375,19 +414,34 @@ class HierarchicalCognitiveCache:
             
             C_{t-1} = g(E_{t-1}) = concat{Ψ_t(k)}_{k=0}^{t-1}
             
+        Args:
+            max_phases: Markov 约束 - 只返回最近 N 个 phase 的内容
+                        None 表示返回全部
+            
         策略:
             - L1中的事件以原始形式返回
             - 已完成阶段用L2中的精炼知识替代
         """
         parts = []
         
-        # 1. 添加L1中的所有事件 (原始形式)
-        for event in self.l1.get_all_events():
-            parts.append(f"[Step {event.step}] {event.content}")
+        # 计算 phase 截断点
+        current_phase = self.l1.current_phase
+        min_phase = 0 if max_phases is None else max(0, current_phase - max_phases + 1)
         
-        # 2. 添加L2中的精炼知识 (替代已完成阶段的详细轨迹)
+        # 1. 添加L1中的事件 (只添加活跃轨迹，初始事件根据 max_phases 决定)
+        if max_phases is None or max_phases <= 0:
+            # 无限制，返回所有 L1 事件
+            for event in self.l1.get_all_events():
+                parts.append(f"[Step {event.step}] {event.content}")
+        else:
+            # Markov 约束：只返回活跃轨迹
+            for event in self.l1._active_trace:
+                parts.append(f"[Step {event.step}] {event.content}")
+        
+        # 2. 添加L2中的精炼知识 (受 max_phases 约束)
         for knowledge in self.l2.get_all_knowledge():
-            parts.append(f"[Phase {knowledge.phase_id} Summary] {knowledge.summary}")
+            if knowledge.phase_id >= min_phase:
+                parts.append(f"[Phase {knowledge.phase_id} Summary] {knowledge.summary}")
         
         return "\n\n".join(parts)
     

@@ -199,14 +199,14 @@ class MCTS(ABC, Generic[State, Action]):
         
         for _ in range(num_simulations):
             # 1. Selection: 选择到叶子节点
-            node = self._select(self.root)
+            leaf_node = self._select(self.root)
             
             # 2. Expansion: 展开节点
-            if not node.is_terminal and not self._is_max_depth(node):
-                node = self._expand(node)
+            if not leaf_node.is_terminal and not self._is_max_depth(leaf_node):
+                leaf_node = self._expand(leaf_node)
             
             # 3. Evaluation: 评估节点
-            reward = self._evaluate(node)
+            reward = self._evaluate(leaf_node)
             
             # 4. Backpropagation: 回传更新
             self._backpropagate(node, reward)

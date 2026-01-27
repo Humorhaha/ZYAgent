@@ -4,16 +4,14 @@ MCTS Module - Monte Carlo Tree Search for LLM Agents
 提供可扩展的 MCTS 框架，支持多种变体组合。
 """
 
-from .mcts import (
+from .base import (
     MCTS,
-    VanillaMCTS,
+    MCTSTask,
     Node,
-    Environment,
 )
 
 __all__ = [
     "MCTS",
-    "VanillaMCTS",
+    "MCTSTask",
     "Node",
-    "Environment",
 ]

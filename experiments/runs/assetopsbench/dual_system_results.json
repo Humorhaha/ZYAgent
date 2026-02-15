@@ -1,0 +1,99 @@
+[
+  {
+    "case_id": 109,
+    "query": "List all failure modes of asset Chiller 6.",
+    "system_used": "system1",
+    "success": true,
+    "final_answer": "answer=[{\"Equipment\": \"Chiller\", \"Failure Mode\": \"Compressor Overheating\", \"Degradation Mechanism\": \"Normal wear and overheating\", \"Influencing Factors\": null}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Heat Exchangers: Fans\", \"Degradation Mechanism\": \"Degraded motor or worn bearings\", \"Influencing Factors\": \"Normal use\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Evaporator\", \"Degradation Mechanism\": \"Water side fouling\", \"Influencing Factors\": null}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Condenser: Water side\", \"Degradation Mechanism\": \"Fouling on the water side\", \"Influencing Factors\": null}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Condenser: Improper water flow rate\", \"Degradation Mechanism\": \"Improper water flow rate in the condenser\", \"Influencing Factors\": null}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Purge Unit\", \"Degradation Mechanism\": \"Excessive purge operation\", \"Influencing Factors\": null}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Refrigerant Operated Control Valve\", \"Degradation Mechanism\": \"Failed spring\", \"Influencing Factors\": null}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Compressor Motor\", \"Degradation Mechanism\": \"Bearing failure\", \"Influencing Factors\": \"Overload conditions\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Expansion Valve\", \"Degradation Mechanism\": \"Blockage\", \"Influencing Factors\": \"Incorrect refrigerant charge\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Water Pump\", \"Degradation Mechanism\": \"Seal failure\", \"Influencing Factors\": \"High operating temperatures\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Temperature Sensor\", \"Degradation Mechanism\": \"Calibration drift\", \"Influencing Factors\": \"Ageing components\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Pressure Relief Valve\", \"Degradation Mechanism\": \"Valve leakage\", \"Influencing Factors\": \"Corrosion\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Chilled Water Coil\", \"Degradation Mechanism\": \"Corrosion\", \"Influencing Factors\": \"Improper water treatment\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Condenser Coil\", \"Degradation Mechanism\": \"Fouling\", \"Influencing Factors\": \"Inadequate maintenance\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Air Fan\", \"Degradation Mechanism\": \"Motor failure\", \"Influencing Factors\": \"Excessive vibration\"}, {\"Equipment\": \"Chiller\", \"Failure Mode\": \"Control Panel\", \"Degradation Mechanism\": \"Electrical failure\", \"Influencing Factors\": \"Power surges\"}]",
+    "tool_calls": [
+      {
+        "tool": "get_failure_modes",
+        "args": {
+          "asset_name": "Chiller 6"
+        },
+        "result_preview": "{'asset_name': 'Chiller 6', 'equipment_type': 'Chiller', 'failure_modes': [{'Equipment': 'Chiller', 'Failure Mode': 'Compressor Overheating', 'Degradation Mechanism': 'Normal wear and overheating', 'Influencing Factors': nan}, {'Equipment': 'Chiller', 'Failure Mode': 'Heat Exchangers: Fans', 'Degradation Mechanism': 'Degraded motor or worn bearings', 'Influencing Factors': 'Normal use'}, {'Equipment': 'Chiller', 'Failure Mode': 'Evaporator', 'Degradation Mechanism': 'Water side fouling', 'Influencing Factors': nan}, {'Equipment': 'Chiller', 'Failure Mode': 'Condenser: Water side', 'Degradation Mechanism': 'Fouling on the water side', 'Influencing Factors': nan}, {'Equipment': 'Chiller', 'Failure Mode': 'Condenser: Improper water flow rate', 'Degradation Mechanism': 'Improper water flow rate in the condenser', 'Influencing Factors': nan}, {'Equipment': 'Chiller', 'Failure Mode': 'Purge Unit', 'Degradation Mechanism': 'Excessive purge operation', 'Influencing Factors': nan}, {'Equipment': 'Chiller', 'Failure Mode': 'Refrigerant Operated Control Valve', 'Degradation Mechanism': 'Failed spring', 'Influencing Factors': nan}, {'Equipment': 'Chiller', 'Failure Mode': 'Compressor Motor', 'Degradation Mechanism': 'Bearing failure', 'Influencing Factors': 'Overload conditions'}, {'Equipment': 'Chiller', 'Failure Mode': 'Expansion Valve', 'Degradation Mechanism': 'Blockage', 'Influencing Factors': 'Incorrect refrigerant charge'}, {'Equipment': 'Chiller', 'Failure Mode': 'Water Pump', 'Degradation Mechanism': 'Seal failure', 'Influencing Factors': 'High operating temperatures'}, {'Equipment': 'Chiller', 'Failure Mode': 'Temperature Sensor', 'Degradation Mechanism': 'Calibration drift', 'Influencing Factors': 'Ageing components'}, {'Equipment': 'Chiller', 'Failure Mode': 'Pressure Relief Valve', 'Degradation Mechanism': 'Valve leakage', 'Influencing Factors': 'Corrosion'}, {'Equipment': 'Chiller', 'Failure Mode': 'Chilled Water Coil', 'Degradation Mechanism': 'Corrosion', 'Influencing Factors': 'Improper water treatment'}, {'Equipment': 'Chiller', 'Failure Mode': 'Condenser Coil', 'Degradation Mechanism': 'Fouling', 'Influencing Factors': 'Inadequate maintenance'}, {'Equipment': 'Chiller', 'Failure Mode': 'Air Fan', 'Degradation Mechanism': 'Motor failure', 'Influencing Factors': 'Excessive vibration'}, {'Equipment': 'Chiller', 'Failure Mode': 'Control Panel', 'Degradation Mechanism': 'Electrical failure', 'Influencing Factors': 'Power surges'}], 'status': 'SUCCESS', 'available_failure_codes': [{'category': 'Structural and Mechanical Failures', 'primary_code': 'M001', 'primary_code_description': 'Cracking'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M002', 'primary_code_description': 'Fracture'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M003', 'primary_code_description': 'Deformation'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M004', 'primary_code_description': 'Rupture'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M005', 'primary_code_description': 'Misalignment'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M006', 'primary_code_description': 'Overheating'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M007', 'primary_code_description': 'Overloading'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M008', 'primary_code_description': 'Vibration Issues'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M009', 'primary_code_description': 'Actuator Failure'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M010', 'primary_code_description': 'Compressor Failure'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M011', 'primary_code_description': 'Motor Failure'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M012', 'primary_code_description': 'Sensor/Transducer Failure'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M013', 'primary_code_description': 'Condenser Plugged'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M014', 'primary_code_description': 'Condenser Tube Leak'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M015', 'primary_code_description': 'Flow Sensor Failure'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M016', 'primary_code_description': 'Draining Operations'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M017', 'primary_code_description': 'Major Overhaul'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M018', 'primary_code_description': 'Replacement'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M019', 'primary_code_description': 'Installation'}, {'category': 'Structural and Mechanical Failures', 'primary_code': 'M020', 'primary_code_description': 'Head Operations'}]}"
+      }
+    ],
+    "confidence": 0.55,
+    "semantic_status": "SUCCESS",
+    "duration": 18.091761,
+    "error": ""
+  }
+]
+
+{'asset_name': 'Chiller 6', 'equipment_type': 'Chiller', 'failure_modes': [
+    {'Equipment': 'Chiller', 'Failure Mode': 'Compressor Overheating', 'Degradation Mechanism': 'Normal wear and overheating', 'Influencing Factors': nan
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Heat Exchangers: Fans', 'Degradation Mechanism': 'Degraded motor or worn bearings', 'Influencing Factors': 'Normal use'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Evaporator', 'Degradation Mechanism': 'Water side fouling', 'Influencing Factors': nan
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Condenser: Water side', 'Degradation Mechanism': 'Fouling on the water side', 'Influencing Factors': nan
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Condenser: Improper water flow rate', 'Degradation Mechanism': 'Improper water flow rate in the condenser', 'Influencing Factors': nan
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Purge Unit', 'Degradation Mechanism': 'Excessive purge operation', 'Influencing Factors': nan
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Refrigerant Operated Control Valve', 'Degradation Mechanism': 'Failed spring', 'Influencing Factors': nan
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Compressor Motor', 'Degradation Mechanism': 'Bearing failure', 'Influencing Factors': 'Overload conditions'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Expansion Valve', 'Degradation Mechanism': 'Blockage', 'Influencing Factors': 'Incorrect refrigerant charge'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Water Pump', 'Degradation Mechanism': 'Seal failure', 'Influencing Factors': 'High operating temperatures'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Temperature Sensor', 'Degradation Mechanism': 'Calibration drift', 'Influencing Factors': 'Ageing components'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Pressure Relief Valve', 'Degradation Mechanism': 'Valve leakage', 'Influencing Factors': 'Corrosion'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Chilled Water Coil', 'Degradation Mechanism': 'Corrosion', 'Influencing Factors': 'Improper water treatment'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Condenser Coil', 'Degradation Mechanism': 'Fouling', 'Influencing Factors': 'Inadequate maintenance'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Air Fan', 'Degradation Mechanism': 'Motor failure', 'Influencing Factors': 'Excessive vibration'
+    },
+    {'Equipment': 'Chiller', 'Failure Mode': 'Control Panel', 'Degradation Mechanism': 'Electrical failure', 'Influencing Factors': 'Power surges'
+    }
+  ], 'status': 'SUCCESS', 'available_failure_codes': [
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M001', 'primary_code_description': 'Cracking'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M002', 'primary_code_description': 'Fracture'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M003', 'primary_code_description': 'Deformation'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M004', 'primary_code_description': 'Rupture'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M005', 'primary_code_description': 'Misalignment'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M006', 'primary_code_description': 'Overheating'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M007', 'primary_code_description': 'Overloading'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M008', 'primary_code_description': 'Vibration Issues'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M009', 'primary_code_description': 'Actuator Failure'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M010', 'primary_code_description': 'Compressor Failure'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M011', 'primary_code_description': 'Motor Failure'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M012', 'primary_code_description': 'Sensor/Transducer Failure'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M013', 'primary_code_description': 'Condenser Plugged'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M014', 'primary_code_description': 'Condenser Tube Leak'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M015', 'primary_code_description': 'Flow Sensor Failure'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M016', 'primary_code_description': 'Draining Operations'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M017', 'primary_code_description': 'Major Overhaul'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M018', 'primary_code_description': 'Replacement'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M019', 'primary_code_description': 'Installation'
+    },
+    {'category': 'Structural and Mechanical Failures', 'primary_code': 'M020', 'primary_code_description': 'Head Operations'
+    }
+  ]
+}

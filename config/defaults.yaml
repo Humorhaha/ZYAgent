@@ -1,0 +1,54 @@
+# 默认实验配置
+# 所有消融实验只需修改此文件，不需改代码
+
+seed: 42
+
+experiment_name: "default"
+description: "Default experiment configuration"
+
+system1:
+  use_wisdom: true
+  wisdom_k: 3
+  max_steps: 20
+  markov_window: 1    # 1-step Markov constraint
+
+system2:
+  enabled: true
+  search_strategy: "mcts"  # mcts | beam | random | none
+  top_k: 3
+  branch: 3
+  roll_branch: 3
+  roll_forward_steps: 5
+  exploration_constant: 1.414
+  max_depth: 20
+  iteration_limit: 100
+  use_reflection: "common"
+  roll_policy: "greedy"
+  alpha: 0.5
+  graph_persist:
+    enabled: true
+    backend: "neo4j"
+    batch_size: 100
+    flush_interval_ms: 1000
+    persist_stats: "snapshot"  # off | snapshot | periodic
+
+memory:
+  enabled: true
+  backend: "jsonl"         # jsonl | neo4j
+  enable_hot_start: true
+  enable_promotion: true
+  promotion_min_samples: 5
+  l1_max_size: 1000
+  l2_max_size: 500
+
+failure:
+  soft_failure_threshold: 0.5
+  queue_max_size: 100
+
+evaluation:
+  output_dir: "experiments/runs"
+
+tts:
+  persist: true
+  backend: "file"          # file | sqlite | object_store
+  directory: "data/tts"

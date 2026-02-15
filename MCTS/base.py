@@ -363,6 +363,8 @@ class MCTS:
         print('-' * 40)
         print('选择节点阶段\n')
         found, node = self.select_node(self.root)
+        current_action = node.history_action.split('\n')[-1] if node.history_action else "(Root)"
+        print(f"  [Select] Depth: {node.depth} | Current Node: {current_action[:200]}...\n")
         if found:
             if self.task.sample_value != 'full':
                 return True, node
@@ -462,6 +464,9 @@ class MCTS:
                 
                 child.visit_sequence = self.task.node_count
                 self.task.update_count()
+                
+                # extracting action part for display
+                print(f"  [Expand] Child {self.task.node_count}: {child.history_action.split('Action:')[-1][:200].strip()}...")
         
         node.is_fully_expanded = True
         return node
@@ -577,7 +582,7 @@ class MCTS:
         Returns:
             rollout 过程中的最大价值
         """
-        max_V = self.task.low
+        max_V = node.value
         history = node.history_action
         cur_step = node.depth + 1
         
@@ -601,6 +606,9 @@ class MCTS:
             action = random.choice(next_steps)
             history = history + action
             cur_step += 1
+            
+            # Log rollout step
+            print(f"  [Rollout] Step {cur_step}: {action.split('Action:')[-1][:200].strip()}...")
             
             value = self.task.get_step_value(history)
             if value > max_V:

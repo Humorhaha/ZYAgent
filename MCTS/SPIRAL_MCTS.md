@@ -1,124 +1,37 @@
-# SPIRAL MCTS
+# SPIRAL MCTS Implementation Map
 
-基于 SPIRAL 论文的树搜索实现。
+## 理论与实现的映射
 
-## 核心架构
+我们当前使用的 **System 2 MCTS** 实际上是对 **SPIRAL Framework** 的一种具体化实现。下表展示了理论角色与代码模块的对应关系。
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │              SPIRAL Agent               │
-                    │  (Planner + Simulator + Critic 三角色)   │
-                    └─────────────────────────────────────────┘
-                                        │
-        ┌───────────────────────────────┼───────────────────────────────┐
-        ▼                               ▼                               ▼
-  ┌──────────┐                   ┌──────────┐                   ┌──────────┐
-  │ Planner  │                   │Simulator │                   │  Critic  │
-  │ π_planner│                   │  W_sim   │                   │ C_critic │
-  └──────────┘                   └──────────┘                   └──────────┘
-       │                               │                               │
-       │ a_t ~ π(s_t)                  │ o_{t+1} = W(s_t, a_t)         │ ρ_ref = C(s_t, a_t)
-       │ 提议动作                       │ 预测观察                       │ 策略评分
-       ▼                               ▼                               ▼
-  ┌────────────────────────────────────────────────────────────────────────┐
-  │                         组合奖励 (Backpropagation)                      │
-  │               R_t = α · R_base(a_t) + (1 - α) · ρ_ref                  │
-  └────────────────────────────────────────────────────────────────────────┘
-```
+### 角色映射
 
-## 搜索流程
+| SPIRAL 角色 | 功能描述 | 代码实现 | 对应 Prompt |
+| :--- | :--- | :--- | :--- |
+| **Planner** (规划器) | 给定当前状态，提议下一步可能的动作 | `MCTSAdapter.get_next_step()` | `MCTS_NEXT_STEP`<br>`MCTS_NEXT_STEP_WITH_REFLECTION` |
+| **Simulator** (模拟器) | 预测执行动作后的新状态 (世界模型) | `MCTS.random_policy()` (Rollout)<br>*注: 我们直接用 LLM 预测"下一步会发生什么"，而非物理仿真* | `MCTS_NEXT_STEP` (在 Rollout 中预测后继步骤) |
+| **Critic** (评估器) | 评估当前状态/动作对达成目标的价值 | `MCTSAdapter.get_step_value()` | `MCTS_VALUE_EVALUATION` |
 
-```
-                             ┌───┐
-                             │ s₀│ Initial Request
-                             └─┬─┘
-                               │
-            ┌──────────────────┼──────────────────┐
-            ▼                  ▼                  ▼
-          ┌───┐              ┌───┐              ┌───┐
-          │ s₁│              │ s₂│◄─────────────│ s₃│
-          └───┘              └─┬─┘              └───┘
-                               │
-                    ┌──────────┴──────────┐
-                    ▼                     ▼
-                 ┌─────┐               ┌─────┐
-                 │s₃,₁ │               │s₃,₂ │◄── Critic: ρ_ref
-                 └─────┘               └──┬──┘
-                                          │
-                                          ▼
-                                       ┌─────┐
-                                       │ s₄  │ Terminal
-                                       └─────┘
-```
+### 增强机制 (Beyond SPIRAL)
 
-**四阶段循环:**
+我们在标准 SPIRAL 的基础上增加了 **Reflexion (反思)** 机制：
 
-| 阶段 | 操作 | 公式 |
-|------|------|------|
-| **Selection** | UCT 选择到叶子 | `a = argmax[Q + c√(ln N_p / N)]` |
-| **Expansion** | Planner 提议动作 | `a_t ~ π_planner(s_t)` |
-| **Simulation** | Simulator 预测 + Critic 评分 | `o_t = W_sim(s, a)`, `ρ = C_critic(s, a)` |
-| **Backprop** | 组合奖励回传 | `R = α·R_base + (1-α)·ρ_ref` |
+*   **Prompt**: `MCTS_REFLECTION`
+*   **机制**: 在 Planner 提议动作之前，先让 Critic (以反思模式) 对当前历史进行点评。如果发现方向错误，会**强制注入**批评意见给 Planner。
+*   **代码**: `MCTS.expand()` 中的 `if not node.reflection: ...` 逻辑。
 
-## 接口设计
+---
 
-### SPIRALEnvironment
+## 完整工作流 (Workflow)
 
-整合 Planner + Simulator 的抽象基类：
-
-```python
-class SPIRALEnvironment(ABC):
-    # Planner 接口
-    def propose_actions(self, state) -> List[Action]: ...
-    
-    # Simulator 接口
-    def simulate(self, state, action) -> State: ...
-    def is_terminal(self, state) -> bool: ...
-    def get_base_reward(self, state) -> float: ...
-```
-
-### Critic
-
-评估动作的策略价值：
-
-```python
-class Critic(Protocol):
-    def evaluate(self, state, action, next_state) -> float:
-        """返回 ρ_ref ∈ [0, 1]"""
-```
-
-### SPIRALMCTS
-
-主搜索类：
-
-```python
-mcts = SPIRALMCTS(
-    env,                    # SPIRALEnvironment 实现
-    critic,                 # Critic 实现
-    c_param=1.414,          # UCT 探索常数
-    reward_alpha=0.5,       # R = α·R_base + (1-α)·ρ_ref
-    max_depth=None,         # 最大深度
-)
-action = mcts.search(state, num_simulations=100)
-```
-
-## 奖励计算
-
-```
-R_t = α · R_base(a_t) + (1 - α) · ρ_ref
-      ━━━━━━━━━━━━━━━   ━━━━━━━━━━━━━━━
-      Simulator 奖励      Critic 评分
-      (结果启发式)        (策略评估)
-```
-
-- `α = 1.0`: 纯结果奖励 (忽略 Critic)
-- `α = 0.0`: 纯策略评分 (忽略 R_base)
-- `α = 0.5`: 平衡组合 (推荐)
-
-## 扩展点
-
-| 组件 | 扩展方式 | 示例 |
-|------|----------|------|
-| Planner | 实现 `propose_actions` | LLM 动作采样 |
-| Simulator | 实现 `simulate` | 世界模型预测 |
-| Critic | 实现 `evaluate` | LLM 自我评估 / PRM |
+1.  **Request**: 用户输入 IoT 诊断任务。
+2.  **Planner (Expansion)**:
+    *   先检查 `Critic` 意见 (`MCTS_REFLECTION`)。
+    *   LLM 生成 $K$ 个候选步骤 (`MCTS_NEXT_STEP`).
+3.  **Critic (Evaluation)**:
+    *   LLM 对每个步骤打分 (`MCTS_VALUE_EVALUATION`).
+    *   分数 $V \in [0, 1]$ 作为节点的初始价值。
+4.  **Simulator (Rollout)**:
+    *   对于最有潜力的节点，LLM 继续推演后续 5 步 (`MCTS_NEXT_STEP` in loop).
+    *   记录推演中出现的最高价值作为该路径的最终评分。
+5.  **Output**: 搜索结束，输出价值最高的轨迹。

@@ -1,0 +1,256 @@
+\documentclass[12pt, a4paper]{ctexart}
+
+% 页面设置
+\usepackage{geometry}
+\geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+
+% 字符编码和字体
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+% 数学公式支持
+\usepackage{amsmath, amssymb, amsfonts}
+
+% 图形支持 (用于架构图)
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{shapes, arrows, positioning, calc}
+
+% 算法伪代码
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% 列表优化
+\usepackage{enumitem}
+
+% 颜色与超链接
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=green,
+    urlcolor=cyan,
+}
+
+\title{ZYAgent Pipeline 架构设计}
+\author{ZYAgent Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{主进程架构}
+
+\begin{figure}[htbp]
+    \centering
+    \usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, backgrounds, fit}
+
+    \begin{tikzpicture}[
+        scale=0.8, transform shape,
+        node distance=1.5cm,
+        auto,
+        >=Stealth,
+        font=\small,
+        % Styles
+        process_label/.style={rectangle, draw=blue!50, fill=blue!10, minimum width=2cm, minimum height=0.8cm, align=center},
+        agent/.style={circle, draw=gray, fill=gray!10, minimum size=1.5cm, align=center, font=\footnotesize},
+        decision/.style={diamond, draw=orange, thick, fill=orange!10, inner sep=0pt, minimum size=1.0cm},
+        box/.style={rectangle, draw=blue!50, fill=blue!5, rounded corners, minimum width=2cm, minimum height=1cm, align=center},
+        cylinder_node/.style={cylinder, shape border rotate=90, draw, aspect=0.25, minimum width=2.5cm, minimum height=1.5cm, align=center},
+        queue/.style={rectangle, draw, thick, minimum width=3cm, minimum height=0.8cm},
+        track_line/.style={dashed, thick},
+        line/.style={draw, thick, ->},
+        annotation/.style={rectangle, fill=yellow!20, font=\scriptsize, align=center, inner sep=2pt}
+    ]
+
+        % ================= Areas Definition (Coordinates) =================
+        \coordinate (split_line) at (2, 0);
+        
+        % ================= Left: Background Process =================
+        \node[process_label] (bg_label) at (-6, 8) {后台进程};
+        
+        % MCTS Tree
+        \node[box, fill=blue!20] (mcts_root) at (-7, 6) {MCTS};
+        \coordinate (mcts_c1) at (-8.5, 4.5);
+        \coordinate (mcts_c2) at (-7, 4.5);
+        \coordinate (mcts_c3) at (-5.5, 4.5);
+        
+        \draw[thick, blue!50] (mcts_root) -- ++(0, -0.5) -| (mcts_c1);
+        \draw[thick, blue!50] (mcts_root) -- ++(0, -0.5) -| (mcts_c2);
+        \draw[thick, blue!50] (mcts_root) -- ++(0, -0.5) -| (mcts_c3);
+        
+        \node[rectangle, draw=blue!50, fill=blue!5, minimum size=0.5cm] at (mcts_c1) {};
+        \node[rectangle, draw=blue!50, fill=blue!5, minimum size=0.5cm] at (mcts_c2) {};
+        \node[rectangle, draw=blue!50, fill=blue!5, minimum size=0.5cm] at (mcts_c3) {};
+
+        % HCC (Stacked Cylinders)
+        \node[rectangle, draw=blue!20, fill=blue!5, minimum width=1.5cm, minimum height=0.8cm] (hcc_label) at (-3, 6) {HCC};
+        
+        % Level 2
+        \node[cylinder_node, fill=green!10, minimum height=1.2cm] (hcc_l2) at (-3, 3.5) {Level 2 (Wisdom)};
+        % Arrow
+        \draw[->, thick] (-3, 2.0) -- (-3, 2.7) node[midway, right, font=\tiny] {Wisdom Promotion};
+        
+        % Level 1 (Success/Fail) - Simulated by stacking
+        \node[cylinder_node, fill=blue!30, minimum height=0.8cm, shape border rotate=90] (hcc_l1_fail) at (-3, 1.2) {失败};
+        \node[cylinder_node, fill=red!30, minimum height=0.8cm, shape border rotate=90, yshift=-0.8cm] (hcc_l1_succ) at (-3, 1.2) {成功};
+
+        % Failure Queue
+        \node at (-3, -3.5) (queue_label) {Failure Queue};
+        \draw[thick] (-4.5, -3.2) -- (-1.5, -3.2);
+        \draw[thick] (-4.5, -3.8) -- (-1.5, -3.8);
+
+        % Lazy Update Label
+        \node[fill=yellow!10, inner sep=5pt] at (-7, -3.5) {\textbf{惰性更新}};
+        
+        % MCTS Connections
+        \draw[track_line, ->] (-8.5, 4.0) -- node[left, font=\tiny] {成功轨迹} (-8.5, -0.5) -- (hcc_l1_succ.west);
+        \draw[track_line, ->] (-5.5, 4.0) -- node[right, font=\tiny] {失败轨迹} (-5.5, 1.2) -- (hcc_l1_fail.west);
+
+        % ================= Right: Main Process =================
+        \node[process_label] (main_label) at (4, 8) {主进程};
+        
+        % User Query
+        \node[box] (query) at (4, 5) {user query};
+        
+        % Distillation
+        \node[agent] (distill) at (7, 4) {Distillation\\Agent};
+        \draw[line] (query) -| (distill);
+        
+        % ReAct
+        \node[agent] (react) at (7, 1) {ReAct\\Agent};
+        \draw[line] (distill) -- (react);
+        
+        % Hot Start (Bold Curved Arrow)
+        \draw[line, ultra thick, bend left=45] (hcc_l2.east) to node[above, font=\scriptsize, align=center] {Hot Start \&\\每个任务只提取一次} (react.west);
+        
+        % TTS
+        \node[cylinder_node, fill=green!10, minimum width=1.5cm, minimum height=1cm, shape border rotate=90] (tts) at (10, 2.5) {TTS};
+        \draw[line] (tts) |- node[near end, above] {当前状态信息} (react);
+        
+        % TTS Annotation
+        \node[annotation, fill=orange!10, above=0.5cm of tts] (tts_note) {只存上一轮的轨迹\\(防止上下文爆炸 \& 保证Markov性质)};
+        \draw[->, thin] (tts_note) -- (tts);
+        
+        % Decision
+        \node[decision] (done) at (7, -1) {};
+        \draw[line] (react) -- (done);
+        
+        % Branches
+        \node[agent] (reflect) at (11, -1) {Reflect\\Agent};
+        \draw[line] (done) -- node[above] {任务没完成} (reflect);
+        
+        \node[agent] (review) at (7, -3) {Review\\Agent};
+        \draw[line] (done) -- node[right] {任务完成} (review);
+        
+        \draw[line] (review.east) -| node[near start, below] {任务完成但中间过程错误} (reflect.south);
+        
+        % Reflect Flow
+        \draw[line] (reflect) -- node[right] {最新的轨迹} (tts);
+        
+        % Success
+        \node[box] (success) at (4, -3) {Success};
+        \draw[line] (review) -- (success);
+        
+        % Feedback to Background
+        \draw[track_line, ->] (success.west) -- node[below, font=\tiny] {Success 轨迹} (hcc_l1_succ.east);
+        \draw[line] (reflect.south) -- ++(0, -0.5) -| node[near start, below, font=\tiny] {Failure 轨迹} (queue_label.east);
+        
+        % Queue to HCC (Implicit or via arrow)
+        \draw[track_line, ->] (-1.5, -3.5) -- (-0.5, -3.5) |- (hcc_l1_fail.east);
+
+        % ================= Frame =================
+        \coordinate (bg_bl) at (-8.5, -4);
+        \coordinate (main_tr) at (12, 8.5);
+        
+        \begin{scope}[on background layer]
+            \node[fit=(bg_label)(mcts_root)(queue_label)(hcc_l2)(bg_bl), draw=gray!30, rounded corners] {};
+            \node[fit=(main_label)(tts)(reflect)(success)(main_tr), draw=gray!30, rounded corners] {};
+        \end{scope}
+
+    \end{tikzpicture}
+    
+    \caption{ZYAgent 最终架构逻辑图：清晰展示后台进程 (MCTS/HCC) 与主进程 (ReAct Loop) 的交互与数据流向}
+    \label{fig:final_logic}
+\end{figure}
+
+\section{架构概览 (Overview)}
+
+ZYAgent 采用一种创新的 \textbf{双系统架构 (Dual-System Architecture)}，旨在模仿人类认知中的快思考 (System 1) 与慢思考 (System 2) 机制。
+
+\begin{itemize}
+    \item \textbf{System 1 (主进程)}: 负责实时交互与任务执行，强调响应速度与上下文效率。
+    \item \textbf{System 2 (后台进程)}: 负责深度探索与知识沉淀，利用空闲算力进行反事实推理 (Counterfactual Reasoning)。
+\end{itemize}
+
+两者通过 \textbf{HCC (Hierarchical Cognitive Cache)} 和异步消息队列进行解耦，确保了系统的高鲁棒性与持续进化能力。
+
+\section{主进程详解 (Main Process)}
+
+主进程是用户直接交互的界面，核心是一个基于 \textbf{Markov 性质} 的 ReAct 闭环。
+
+\begin{enumerate}
+    \item \textbf{Distillation Agent (顶层规划)}: 
+    \begin{itemize}
+        \item 作为系统的入口，接收 User Query。
+        \item 负责 \textbf{Hot Start}: 从 HCC Level 2 中提取与当前任务最相关的 Wisdom（一次性注入），为 ReAct Agent 提供高质量的初始指导。
+    \end{itemize}
+    
+    \item \textbf{ReAct Agent (执行引擎)}:
+    \begin{itemize}
+        \item 执行标准的 Thought-Action-Observation 循环。
+        \item \textbf{Context Constraint}: 它的上下文输入严格受限于 TTS Buffer，不依赖完整的历史对话记录。
+    \end{itemize}
+    
+    \item \textbf{TTS Buffer (瞬时轨迹存储)}:
+    \begin{itemize}
+        \item \textbf{设计哲学}: 为了防止 Long-horizon 任务中的上下文爆炸 (Context Explosion)，TTS 仅存储 \textbf{上一轮} 的关键轨迹信息。
+        \item \textbf{Markov 假设}: 假设当前状态 (State $t$) 包含了决策所需的所有必要信息，从而将推理复杂度从 $O(N^2)$ 降低到 $O(1)$。
+    \end{itemize}
+    
+    \item \textbf{Review \& Reflect (质量控制闭环)}:
+    \begin{itemize}
+        \item \textbf{Review Agent}: 检查 ReAct 的输出是否达成目标。如果成功，生成 Success 轨迹；如果失败，触发 Reflect。
+        \item \textbf{Reflect Agent}: 分析失败原因。
+            \begin{itemize}
+                \item \textbf{短期修正}: 更新 TTS Buffer，将反思结果作为 Context 注入下一轮 ReAct。
+                \item \textbf{长期记忆}: 将难以解决的 Failure 轨迹发送至后台 Failure Queue，寻求 System 2 的帮助。
+            \end{itemize}
+    \end{itemize}
+\end{enumerate}
+
+\section{后台进程详解 (Background Process)}
+
+后台进程作为系统的“潜意识”，在不阻塞主线任务的情况下进行深度学习。
+
+\begin{itemize}
+    \item \textbf{Failure Queue (失败队列)}: 
+    接收来自主进程的失败案例。这些是 System 1 无法处理的“难题”。
+    
+    \item \textbf{MCTS Simulator (蒙特卡洛树搜索)}:
+    \begin{itemize}
+        \item 对 Failure Queue 中的案例进行 \textbf{Off-policy} 探索。
+        \item 通过大量的模拟与回溯，寻找被 ReAct 忽略的成功路径。
+    \end{itemize}
+    
+    \item \textbf{HCC (分层认知缓存)}:
+    \begin{itemize}
+        \item \textbf{Level 1 (Samples)}: 存储 MCTS 搜索生成的原始数据（具体的 Success/Failure 轨迹）。
+        \item \textbf{Wisdom Promotion}: 通过算法将 L1 的具体样本提炼为 L2 的通用 \textbf{Wisdom}（例如：“在处理网络错误时，应优先检查 DNS 配置而非立即重试”）。
+    \end{itemize}
+    
+    \item \textbf{Lazy Update (惰性更新)}:
+    后台的知识更新是异步的。主进程不会等待 MCTS 的结果，而是“惰性”地在下一次任务启动 (Hot Start) 时享受知识更新带来的红利。
+\end{itemize}
+
+\section{核心机制总结}
+
+\begin{description}
+    \item[Markov Property] 通过限制 Context Window 为 1，强制模型学会信息压缩，极大降低推理成本。
+    \item[Hot Start] “每个任务只提取一次”，避免了 RAG 系统中频繁检索带来的噪声与延迟。
+    \item[Failure as Fuel] 失败不再是终点，而是进化的养料。每一个 Failure 最终都会转化为 HCC 中的一条 Success Pattern。
+\end{description}
+
+\end{document}

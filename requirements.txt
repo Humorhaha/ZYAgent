@@ -1,7 +1,7 @@
 # ReactXen 依赖
 
 # LLM API 客户端
-openai>=1.0.0           # OpenAI/Qwen/DeepSeek API (兼容 OpenAI 接口)
+llm>=0.13.1           # LLM CLI tool and library (http://llm.datasette.io)
 
 # 核心依赖
 numpy>=1.20.0           # 数值计算 (HCC Embeddings)

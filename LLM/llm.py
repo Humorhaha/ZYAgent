@@ -38,18 +38,18 @@ from . import prompts
 class LLMConfig:
     """LLM 配置"""
     api_key: str = ""
-    base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-4"
-    temperature: float = 0.7
+    base_url: str = ""
+    model: str = "s"
+    temperature: float = 0.2
     max_tokens: int = 2048
     
     @classmethod
     def from_env(cls) -> "LLMConfig":
         """从环境变量加载配置"""
         return cls(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            model=os.getenv("OPENAI_MODEL", "gpt-4"),
+            api_key=os.getenv("QWEN_API_KEY", ""),
+            base_url=os.getenv("QWEN_URL", "https://api.openai.com/v1"),
+            model=os.getenv("QWEN_MODEL", "gpt-4"),
         )
 
 
@@ -87,22 +87,60 @@ class LLM:
         self._mock_mode = mock_mode
         self._client = None
         
-        # 如果没有 API key，自动进入 Mock 模式
-        if not self.config.api_key:
-            self._mock_mode = True
-            print("[LLM] No API key found, using mock mode")
+        # 检查是否强制进入 Mock 模式
+        # 如果没有 API key，且没有安装 llm 库，则必须 Mock
+        # 如果安装了 llm 库，它可能使用自己的 Key 管理，所以不强制 API Key
+        if not self.config.api_key and not self._mock_mode:
+            try:
+                import llm
+            except ImportError:
+                self._mock_mode = True
+                print("[LLM] No API key found and 'llm' not installed, using mock mode")
     
     def _get_client(self):
-        """延迟初始化 OpenAI 客户端"""
+        """延迟初始化 LLM 模型 (使用 llm 库)"""
         if self._client is None and not self._mock_mode:
             try:
-                import openai
-                self._client = openai.OpenAI(
-                    api_key=self.config.api_key,
-                    base_url=self.config.base_url,
-                )
+                import llm
+                from llm import UnknownModelError
+                
+                try:
+                    # 尝试常规获取
+                    self._client = llm.get_model(self.config.model)
+                except UnknownModelError:
+                    # 如果未知模型且有 Base URL，尝试作为 OpenAI 兼容模型手动创建
+                    if self.config.base_url:
+                        try:
+                            # 尝试从默认插件导入 OpenAIChat 类
+                            from llm.default_plugins.openai_models import Chat as OpenAIChat
+                            self._client = OpenAIChat(
+                                model_id=self.config.model,
+                                key=self.config.api_key,
+                                api_base=self.config.base_url,
+                                headers="" # default
+                            )
+                            # 手动附加 key 和 api_base (双重保险)
+                            self._client.key = self.config.api_key
+                            self._client.api_base = self.config.base_url
+                            print(f"[LLM] Initialized custom OpenAI-compatible model: {self.config.model}")
+                        except ImportError:
+                            print(f"[LLM] Could not import OpenAIChat for custom model '{self.config.model}'")
+                            raise
+                    else:
+                        raise
+
+                # 对于标准模型，如果需要覆盖 Key/URL
+                if hasattr(self._client, 'key') and self.config.api_key:
+                    self._client.key = self.config.api_key
+                    
+                if self.config.base_url and hasattr(self._client, 'api_base'):
+                     self._client.api_base = self.config.base_url
+                     
             except ImportError:
-                print("[LLM] OpenAI package not installed, using mock mode")
+                print("[LLM] 'llm' package not installed, using mock mode")
+                self._mock_mode = True
+            except Exception as e:
+                print(f"[LLM] Error initializing model '{self.config.model}': {e}")
                 self._mock_mode = True
         return self._client
     
@@ -118,18 +156,18 @@ class LLM:
         if self._mock_mode:
             return "[Mock Response]"
         
-        client = self._get_client()
-        if client is None:
+        model = self._get_client()
+        if model is None:
             return "[Mock Response]"
         
         try:
-            response = client.chat.completions.create(
-                model=self.config.model,
-                messages=[{"role": "user", "content": prompt}],
+            # 使用 llm 库的 prompt 方法
+            response = model.prompt(
+                prompt,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
+                # system=... (if needed)
             )
-            return response.choices[0].message.content or ""
+            return response.text()
         except Exception as e:
             print(f"[LLM] API error: {e}")
             return f"[Error: {e}]"
